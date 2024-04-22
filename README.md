@@ -23,9 +23,10 @@ application on our website.
 
 The preferred way to install this extension is through [composer](https://getcomposer.org/download/).
 
-Either run
+Run
 
 ```bash
+$ composer config repositories.pegamento-phpagi github https://github.com/Pegamento/phpagi
 $ composer require pegamento/phpagi ^2.20
 ```
 
@@ -35,7 +36,8 @@ or add
 "pegamento/phpagi": "^2.20"
 ```
 
-to the ```require``` section of your `composer.json` file.
+to the ```require``` section of your `composer.json` file. But make sure you also 
+add the custom repository! 
 
 FILES
 -----
