@@ -26,13 +26,13 @@ The preferred way to install this extension is through [composer](https://getcom
 Either run
 
 ```bash
-$ composer require welltime/phpagi ^2.20
+$ composer require pegamento/phpagi ^2.20
 ```
 
 or add
 
 ```
-"welltime/phpagi": "^2.20"
+"pegamento/phpagi": "^2.20"
 ```
 
 to the ```require``` section of your `composer.json` file.
