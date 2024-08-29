@@ -1562,10 +1562,10 @@ class AGI
      */
     function &new_AsteriskManager()
     {
-        $this->asm = new AGI_AsteriskManager(null, $this->config['asmanager']);
-        $this->asm->setPagi($this);
-        $this->config['asmanager'] =& $this->asm->config['asmanager'];
-        return $this->asm;
+        $this->asmanager = new AGI_AsteriskManager(null, $this->config['asmanager']);
+        $this->asmanager->setPagi($this);
+        $this->config['asmanager'] =& $this->asmanager->config['asmanager'];
+        return $this->asmanager;
     }
 
 
@@ -1786,14 +1786,13 @@ function phpagi_error_handler($level, $message, $file, $line, $context = '')
         $subject = "$basefile/$line/$level: $message";
         $message = "$level: $message in $file on line $line\n\n";
 
-        if(strpos(' '.strtolower($message), 'mysql')) {
-            if(function_exists('mysql_errno')) {
-                $message .= 'MySQL error ' . mysql_errno() . ": " . mysql_error() . "\n\n";
-            }
-            else if(function_exists('mysqli_errno')) {
-                $message .= 'MySQL error ' . mysqli_errno() . ": " . mysqli_error() . "\n\n";
-            }
-        }
+        // TODO: find a way to get a mysqli database context to pass to the mysqli_errno functions.
+        // if(strpos(' '.strtolower($message), 'mysql')) {
+        //     if(function_exists('mysqli_errno')) {
+        //         $db = null;
+        //         $message .= 'MySQL error ' . mysqli_errno($db) . ": " . mysqli_error($db) . "\n\n";
+        //     }
+        // }
 
         // figure out who we are
         if(function_exists('socket_create'))
