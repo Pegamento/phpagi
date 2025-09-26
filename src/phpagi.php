@@ -490,9 +490,11 @@ class AGI
      * @param int $causecode Optional cause code to associate with the hangup
      * @return array, see evaluate for return information. ['result'] is 1 on success, -1 on failure.
      */
-    function caused_hangup(int $causecode=''): array
+    function caused_hangup(?int $causecode = null): array
     {
-        return $this->evaluate("EXEC Hangup $causecode");
+        if (empty($causecode)) { $causecode = ''; }
+        else { $causecode = " ".strval($causecode); }
+        return $this->evaluate("EXEC Hangup".$causecode);
     }
     
     /**
