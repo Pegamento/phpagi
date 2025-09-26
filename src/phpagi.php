@@ -480,6 +480,22 @@ class AGI
     }
 
     /**
+     * Hangup the current channel with a specific cause code.
+     *
+     * This method uses the EXEC Hangup application to terminate the current channel
+     * with a specified cause code. The cause code can be used for logging and
+     * debugging purposes to identify why the call was terminated.
+     *
+     * @link https://www.voip-info.org/asterisk-cmd-hangup
+     * @param int $causecode Optional cause code to associate with the hangup
+     * @return array, see evaluate for return information. ['result'] is 1 on success, -1 on failure.
+     */
+    function caused_hangup(int $causecode=''): array
+    {
+        return $this->evaluate("EXEC Hangup $causecode");
+    }
+    
+    /**
      * Does nothing.
      *
      * @link http://www.voip-info.org/wiki-noop
