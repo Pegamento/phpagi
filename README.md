@@ -58,6 +58,20 @@ DOCS
 * phpagi.conf             - An example configuration file for phpagi.
 * fastagi.xinetd          - xinetd.conf sample configuration for fastagi
 
+TESTS
+-----
+
+The test suite pins down the current behaviour of the library (PHP >= 8.4):
+
+```bash
+composer install
+composer test
+```
+
+Bugs found while writing the tests are described in `tests/KnownBugsTest.php`.
+Those tests assert the intended behaviour, fail today, and are excluded from
+the default run. Run them with `composer test:known-bugs`.
+
 SUPPORT
 -------
 
