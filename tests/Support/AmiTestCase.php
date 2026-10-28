@@ -24,7 +24,7 @@ abstract class AmiTestCase extends TestCase
         $domain = PHP_OS_FAMILY === 'Windows' ? STREAM_PF_INET : STREAM_PF_UNIX;
         [$client, $this->server] = stream_socket_pair($domain, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
 
-        $this->manager = new class (null, ['write_log' => false]) extends AGI_AsteriskManager {
+        $this->manager = new class (EMPTY_CONFIG, ['write_log' => false]) extends AGI_AsteriskManager {
             function ActionID()
             {
                 return 'A1';

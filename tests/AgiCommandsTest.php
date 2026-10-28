@@ -37,6 +37,8 @@ class AgiCommandsTest extends AgiTestCase
             'hangup channel' => [fn (AGI $a) => $a->hangup('SIP/1'), 'HANGUP SIP/1'],
             'caused_hangup without cause' => [fn (AGI $a) => $a->caused_hangup(), 'EXEC Hangup'],
             'caused_hangup with cause' => [fn (AGI $a) => $a->caused_hangup(17), 'EXEC Hangup 17'],
+            // empty(0) is true, so cause 0 (AST_CAUSE_NOTDEFINED) is sent without a code.
+            'caused_hangup zero cause is dropped' => [fn (AGI $a) => $a->caused_hangup(0), 'EXEC Hangup'],
             'noop' => [fn (AGI $a) => $a->noop('hello'), 'NOOP "hello"'],
             'receive_char' => [fn (AGI $a) => $a->receive_char(500), 'RECEIVE CHAR 500'],
             'record_file minimal' => [fn (AGI $a) => $a->record_file('/tmp/x', 'wav'), 'RECORD FILE /tmp/x wav "" -1'],

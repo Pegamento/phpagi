@@ -166,13 +166,19 @@ class AgiHelpersTest extends AgiTestCase
     public function testNewAsteriskManagerSharesConfigAndLogsThroughAgi(): void
     {
         $agi = $this->makeAgi();
-        $agi->config['asmanager'] = ['server' => 'pbx.example.com'];
+        // new_AsteriskManager() always passes a null config path, so the host's
+        // /etc/asterisk/phpagi.conf may load; only assert values set here or always filled in.
+        $agi->config['asmanager'] = ['server' => 'pbx.example.com', 'port' => 5039];
 
         $manager = $agi->new_AsteriskManager();
 
         $this->assertSame($manager, $agi->asmanager);
         $this->assertSame($agi, $manager->pagi);
         $this->assertSame('pbx.example.com', $agi->config['asmanager']['server']);
-        $this->assertSame(5038, $agi->config['asmanager']['port']);
+        $this->assertSame(5039, $agi->config['asmanager']['port']);
+        $this->assertArrayHasKey('username', $agi->config['asmanager']);
+
+        $manager->config['asmanager']['server'] = 'other.example.com';
+        $this->assertSame('other.example.com', $agi->config['asmanager']['server'], 'config is shared by reference');
     }
 }

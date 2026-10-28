@@ -5,6 +5,8 @@ namespace PhpAgi\Tests;
 use AGI_AsteriskManager;
 use PhpAgi\Tests\Support\AmiTestCase;
 
+use const PhpAgi\Tests\Support\EMPTY_CONFIG;
+
 function recordingEventHandler($event, $parameters, $server, $port)
 {
     AsteriskManagerTest::$events[] = [$event, $parameters['Event']];
@@ -23,7 +25,7 @@ class AsteriskManagerTest extends AmiTestCase
 
     public function testConstructorFillsDefaults(): void
     {
-        $manager = new AGI_AsteriskManager(null, ['server' => 'pbx.example.com']);
+        $manager = new AGI_AsteriskManager(EMPTY_CONFIG, ['server' => 'pbx.example.com']);
 
         $this->assertSame('pbx.example.com', $manager->config['asmanager']['server']);
         $this->assertSame(5038, $manager->config['asmanager']['port']);
@@ -104,9 +106,20 @@ class AsteriskManagerTest extends AmiTestCase
 
     public function testCommandOutputInLegacyFollowsFormat(): void
     {
-        $this->reply('Response: Follows', 'Privilege: Command', 'ActionID: A1', "Asterisk 1.8\n--END COMMAND--");
+        // Asterisk <= 1.8 (main/manager.c, action_command) writes the raw CLI output, whose
+        // lines end in a bare "\n", directly followed by "--END COMMAND--\r\n\r\n". So the
+        // output and the marker arrive as one \r\n-delimited record.
+        $this->reply(
+            'Response: Follows',
+            'Privilege: Command',
+            'ActionID: A1',
+            "Asterisk 1.8.32.3 built by root\nUptime: 1 day\n--END COMMAND--"
+        );
 
-        $this->assertSame('Asterisk 1.8', $this->manager->Command('core show version')['data']);
+        $this->assertSame(
+            "Asterisk 1.8.32.3 built by root\nUptime: 1 day",
+            $this->manager->Command('core show version')['data']
+        );
     }
 
     public function testDbGetReturnsValueFromFollowUpEvent(): void
@@ -207,7 +220,7 @@ class AsteriskManagerTest extends AmiTestCase
         $port = (int) substr(strrchr(stream_socket_get_name($probe, false), ':'), 1);
         fclose($probe);
 
-        $manager = new AGI_AsteriskManager(null, ['write_log' => false]);
+        $manager = new AGI_AsteriskManager(EMPTY_CONFIG, ['write_log' => false]);
 
         $this->assertFalse($manager->connect("127.0.0.1:$port", 'user', 'secret'));
         $this->assertSame('127.0.0.1', $manager->server);
