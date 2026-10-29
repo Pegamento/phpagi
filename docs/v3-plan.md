@@ -30,7 +30,7 @@ Status: all design decisions taken; ready for review. Nothing here is implemente
 | Config | explicit constructor arguments. No `/etc/asterisk/phpagi.conf`, no temp dir handling, no global state |
 | Side effects | none on construction: no `set_error_handler`, no signal handlers, no error emails, no syslog, no `error_reporting()` changes. Optional PSR-3 logger (`psr/log`), defaulting to `NullLogger` |
 | AMI | **removed.** v3 is AGI-only. AMI is a different protocol (a long-lived TCP connection with asynchronous events) and is better served by a dedicated client. The README and migration guide recommend [Pegamento/PAMI](https://github.com/Pegamento/PAMI) (`pegamento/pami`), the maintained fork of PAMI |
-| Hangup | `ChannelHungUpException` on a command refused on a dead channel (511), plus `AGISIGHUP=no` in the dialplan (see [Hangup handling](#hangup-handling-decided-channelhungupexception)) |
+| Hangup | `ChannelHungUpException` when the channel is gone: detected from a 511, a self-reported `(hangup)`, or a `CHANNEL STATUS` probe after a failure value. Plus `AGISIGHUP=no` in the dialplan (see [Hangup handling](#hangup-handling-decided-channelhungupexception)) |
 | Failed commands | one rule: a command that runs but fails throws `CommandFailedException`. "Not found / not set" is not a failure and returns `null` or `false`. Only `command()` and `exec()` return a raw `AgiResponse` (see [Command failures](#command-failures)) |
 | Extensibility | a public `command(string $name, string\|int ...$args): AgiResponse` for AGI commands without a dedicated method (new or rarely used ones), going through the same escaping and parsing |
 | Versioning | SemVer. Raising the minimum PHP or Asterisk version only happens in a new major. A `CHANGELOG.md` in Keep a Changelog format. What counts as a breaking change, in particular for `AgiInterface` and the enums, is defined in [Backward-compatibility promise](#backward-compatibility-promise) |
@@ -73,20 +73,49 @@ v3 must run unchanged and silently on both PHP 8.4 and 8.5. "Works on 8.5" isn't
 
 ## Hangup handling (decided: `ChannelHungUpException`)
 
-Context: on Asterisk 20, when the caller hangs up, Asterisk by default sends **SIGHUP** to the AGI process. PHP has no SIGHUP handler by default, so the script is **killed on the spot**, mid-logic and without cleanup or logging. With `AGISIGHUP=no` set on the channel, Asterisk instead writes a `HANGUP` line on stdin and answers every further command (except a few, like `GET VARIABLE`) with `511 Command Not Permitted on a dead channel`. Many existing AGI applications run with the default without realizing it.
+Verified against the Asterisk 20 source (`res/res_agi.c`, branch `20`). Function names are given rather than line numbers, since those drift between releases.
 
-**Decision:** when a command is refused because the channel is gone, v3 throws `ChannelHungUpException`. The docs require `AGISIGHUP=no`, so the script gets the chance to see it.
+### How Asterisk behaves
 
-How it works:
+- **By default Asterisk sends SIGHUP** to the AGI process when the caller hangs up (`run_agi()`, controlled by the `AGISIGHUP` channel variable). PHP has no SIGHUP handler by default, so the script is **killed on the spot**, mid-logic and without cleanup or logging. Many existing AGI applications run with this default without realizing it.
+- **With `AGISIGHUP=no`, a normal AGI script gets no signal and no notification at all.** `run_agi()` writes a `HANGUP` line only when `AGISIGHUP` is *on* and the connection is FastAGI (`agi->fast`). For a regular AGI process the hangup is silent: the script only notices through the responses to its next commands.
+- **A command running during the hangup** (playback, `GET DATA`, `WAIT FOR DIGIT`, …) ends with its normal failure value, usually `200 result=-1`. That's indistinguishable from a non-hangup failure, such as `STREAM FILE` on a missing file, which also answers `200 result=-1 endpos=…`.
+- **Two commands report the hangup themselves:** `RECORD FILE` answers `200 result=-1 (hangup) endpos=…`, and `RECEIVE CHAR` answers `200 result=-1 (hangup)`.
+- **Asterisk always processes a pending hangup before it reads the next command.** In `run_agi()`'s loop, when `ast_check_hangup(chan)` is true, Asterisk drains the channel until `ast_read()` returns NULL, switches to dead mode, and only then reads from the AGI pipe again. So after a hangup, the next command is always handled in dead mode.
+- **In dead mode, a command runs only if its table entry is marked dead-safe** (the last field in the `commands[]` table); every other command gets `511 Command Not Permitted on a dead channel or intercept routine` (`agi_handle_command()`). The **dead-safe commands in Asterisk 20** are: `EXEC`, `DATABASE DEL`, `DATABASE DELTREE`, `DATABASE GET`, `DATABASE PUT`, `GET VARIABLE`, `GET FULL VARIABLE`, `SET VARIABLE`, `NOOP`, `VERBOSE`, `ASYNCAGI BREAK`, `SPEECH DESTROY` and `SPEECH UNLOAD GRAMMAR`. Everything else, including `ANSWER`, `HANGUP`, `CHANNEL STATUS`, `STREAM FILE`, `GET DATA`, all `SAY *` and all `SET` commands except `SET VARIABLE`, answers 511.
+- **The session continues after a failed command.** `RESULT_FAILURE` from a handler doesn't end the AGI loop.
 
-- **The `HANGUP` line only records state.** With `AGISIGHUP=no`, Asterisk writes a `HANGUP` line on stdin when the caller hangs up. The parser consumes it, sets `$agi->isHungUp() === true`, and continues reading the actual response to the pending command. It doesn't throw yet.
-- **A 511 response throws.** "Command not permitted on a dead channel" throws `ChannelHungUpException`, carrying the command that was refused and the request's channel name and unique ID.
-- **So does a failure value after a hangup.** A command that was running when the caller hung up (typically playback or `getData()`) ends with its failure value, e.g. `result=-1`, right after the `HANGUP` line. Once the `HANGUP` line has been seen, a failure value throws `ChannelHungUpException` instead of `CommandFailedException`, so callers see one consistent exception for "the caller is gone".
-- **One deliberate exception: `recordFile()`.** When the caller hangs up during a recording, the recording is still on disk and usually still wanted (voicemail, call notes). `recordFile()` therefore returns a `RecordingResult` with `endReason: RecordingEndReason::Hangup` instead of throwing. The *next* command that Asterisk refuses throws as usual.
-- **Dead-channel-safe commands keep working.** Commands Asterisk still allows on a dead channel (such as `GET VARIABLE`, `SET VARIABLE` and `VERBOSE`; exact list to verify against Asterisk 20) return normally. That keeps `h`-extension and hangup-handler scripts usable, and lets cleanup code read channel variables after a hangup.
-- **`hangup()` itself never throws.** Hanging up our own channel is normal; only the *next* refused command throws.
-- **It isn't an error type.** `ChannelHungUpException` extends `\RuntimeException` and implements a shared marker interface `AgiThrowable`, but deliberately does *not* extend `AgiException`. A `catch (AgiException $e)` meant for real errors therefore never swallows or error-logs a normal hangup. `catch (AgiThrowable $e)` catches both.
+### Decision
+
+When the channel turns out to be gone, v3 throws `ChannelHungUpException`, which callers catch once at their entry point. The docs require `AGISIGHUP=no`, because otherwise the process is killed before the library can do anything.
+
+### How the library detects a hangup
+
+1. **A 511 response** to any command throws `ChannelHungUpException` and sets `isHungUp()`.
+2. **A self-reported hangup** (`(hangup)` in the response to `RECORD FILE` or `RECEIVE CHAR`) sets `isHungUp()` immediately, without a probe. `receiveChar()` then throws `ChannelHungUpException`. `recordFile()` *returns*, see below.
+3. **The probe.** When a command that isn't dead-safe returns its failure value, the library can't tell "failed" from "caller hung up" by the response alone. It then sends one probe, `CHANNEL STATUS`, which isn't dead-safe:
+   - `511` → the channel is gone: set `isHungUp()`, throw `ChannelHungUpException` for the *original* command.
+   - any other answer → a real failure: throw `CommandFailedException` for the original command. The probe's own answer is discarded.
+
+   This is reliable because Asterisk processes a pending hangup before reading the next command (see above), so a probe sent after a hangup always gets 511. It costs one extra exchange, and only on failures.
+4. **`exec()` with result `-1` is probed too.** `EXEC` is dead-safe, so it never gets a 511. A dialplan application returning `-1` usually means "the channel hung up / stop". If the probe answers 511, `exec()` throws `ChannelHungUpException`; otherwise it returns the raw response as usual. This matters, because scripts that drive the call mostly through `exec('Playback', …)` and similar would otherwise never see the hangup.
+5. **Dead-safe commands are never probed.** A failing `databasePut()` on a dead channel didn't fail *because* of the hangup, so it throws `CommandFailedException` as usual.
+6. **The `HANGUP` line is still parsed,** but only matters for custom transports: FastAGI-style servers built on our `Transport` interface, where Asterisk does send it with `AGISIGHUP` on. When it appears, it sets `isHungUp()`, and the response to the pending command is read as usual.
+
+### Behavior per method
+
+- **`hangup()` (own channel) never throws.** On a channel that's already gone, Asterisk answers `HANGUP` with 511. `hangup()` treats that as success and sets `isHungUp()`.
+- **`recordFile()` returns on a hangup.** The recording is still on disk and usually still wanted (voicemail, call notes), so it returns a `RecordingResult` with `endReason: RecordingEndReason::Hangup`. The *next* refused command throws as usual.
+- **`execDial()` returns on a hangup.** When the caller ends an answered call, `Dial` returns `-1` on a now-dead channel with `DIALSTATUS=ANSWER`. That's how most successful calls end. `execDial()` reads `DIALSTATUS` (`GET VARIABLE` works on a dead channel), probes once to set `isHungUp()` correctly, and **returns the `DialStatus`**, without throwing. The next refused command throws.
+- **Dead-safe commands keep working after a hangup, silently.** `getVariable()`, `setVariable()`, `evaluateExpression()`, the `database*()` methods, `verbose()` and `noop()` behave normally on a dead channel. That keeps `h`-extension and hangup-handler scripts usable. The same is true for **everything built on `EXEC`**: `exec()` (apart from rule 4), `execGoto()`, `setGlobalVariable()` and `hangupWithCause()` all run on a dead channel without a 511. The docs say so, and call flows that must not continue after a hangup should check `isHungUp()` or call `checkHangup()`.
+- **`checkHangup(): bool`** sends the probe on request and updates `isHungUp()`. It's for scripts, or long stretches of a script, that only use dead-safe commands and therefore would never see a 511 (for example a loop of `exec()` calls whose applications don't return `-1`). `isHungUp()` itself only reports what the library already knows, and never sends anything.
+- **`AGIEXITONHANGUP=yes`** (an Asterisk channel variable) makes Asterisk end the AGI session on hangup, which the script sees as EOF → `ConnectionException`. The docs recommend leaving it off with v3, so the hangup surfaces as `ChannelHungUpException` instead.
+
+### Design notes
+
+- **It isn't an error type.** `ChannelHungUpException` extends `\RuntimeException` and implements a shared marker interface `AgiThrowable`, but deliberately does *not* extend `AgiException`. A `catch (AgiException $e)` meant for real errors therefore never swallows or error-logs a normal hangup. `catch (AgiThrowable $e)` catches both. The exception carries the command that triggered it, and the request's channel name and unique ID.
 - **No signal handler is installed.** Installing a SIGHUP handler is a global side effect a library shouldn't impose. The README and migration guide make `AGISIGHUP=no` a documented requirement, show the dialplan line, and explain what happens without it: the process is killed.
+- **The probe is visible.** It's logged at debug like any command, and `FakeTransport` requires it to be scripted (see [`FakeTransport` behavior](#faketransport-behavior)), so tests document exactly what happens on the wire.
 
 Why an exception:
 
@@ -94,9 +123,9 @@ Why an exception:
 - \+ It gives a *clean* exit point: the application catches it once at its entry point, logs it as a normal event, runs cleanup and exits 0.
 - \+ Precedent: PAGI (marcelog) throws `ChannelDownException` for the same case.
 - − It feels like error handling for a normal event. Mitigation: it's a distinct exception type (not an "error"), documented as control flow, and meant to be caught in exactly one place.
-- − Code that must keep working after hangup (the `h` extension, hangup handlers) must avoid commands that answer 511. `GET VARIABLE` and `SET VARIABLE` still work on a dead channel, so in practice that's rare.
+- − Code that must keep working after a hangup (the `h` extension, hangup handlers) must stick to dead-safe commands. The list above covers what such code normally needs: variables, the database, logging and `EXEC`.
 
-Rejected alternative, returning the response and leaving callers to check `isHungUp()`: every call site that matters would need a check, and a missed one keeps the script running against a dead channel. `isHungUp()` still exists, for cleanup code that wants to ask.
+Rejected alternative, returning the response and leaving callers to check `isHungUp()`: every call site that matters would need a check, and a missed one keeps the script running against a dead channel. `isHungUp()` and `checkHangup()` still exist, for code that wants to ask.
 
 Separately, a dropped connection (EOF/write failure) always throws `ConnectionException`, and protocol errors (510 invalid command, 520 bad syntax) always throw `InvalidCommandException`. Those are real errors.
 
@@ -105,10 +134,10 @@ Separately, a dropped connection (EOF/write failure) always throws `ConnectionEx
 Settled before the command work (implementation step 4) starts. Asterisk reports most failures as a successful protocol exchange with a failure value, typically `200 result=-1`, and the meaning of `result` differs per command. 2.x passed that through and left every caller to interpret it. v3 interprets it once, inside the library, with one rule:
 
 1. **Protocol errors** (510 unknown command, 520 bad syntax) throw `InvalidCommandException`. These are bugs in the calling code or the library.
-2. **A dead channel** (511, or a failure value after the `HANGUP` notification was seen) throws `ChannelHungUpException` (see [Hangup handling](#hangup-handling-decided-channelhungupexception)).
+2. **A dead channel** throws `ChannelHungUpException`. It's detected from a 511, from a response that reports `(hangup)` itself, or from the `CHANNEL STATUS` probe the library sends when a non-dead-safe command returns its failure value (see [Hangup handling](#hangup-handling-decided-channelhungupexception)). So rule 3 only applies once the probe has shown the channel is still up.
 3. **A command that ran and failed** (the command's documented failure value, usually `result=-1`, on a live channel) throws `CommandFailedException`. It carries the command, the raw `AgiResponse` and the channel. `void` methods therefore never fail silently: a `databasePut()` or `setVariable()` either worked or threw.
 4. **"Not found / not set / nothing pressed" is an answer, not a failure.** It's returned as `null` (`getVariable()`, `databaseGet()`, `channelStatus()` for an unknown channel, `waitForDigit()` on timeout) or `false` (`databaseDel()` when the key didn't exist).
-5. **Raw responses only from the escape hatches.** `command()` returns the `AgiResponse` and applies only rules 1 and 2, because the library can't know an arbitrary command's failure value. `exec()` does the same, since `result` is whatever the dialplan application returns. The one exception: `result=-2` from `EXEC` means the application doesn't exist, which throws `ApplicationNotFoundException` (a subclass of `CommandFailedException`).
+5. **Raw responses only from the escape hatches.** `command()` returns the `AgiResponse` and applies only rules 1 and 2, because the library can't know an arbitrary command's failure value. `exec()` does the same, since `result` is whatever the dialplan application returns. Two exceptions: `result=-2` from `EXEC` means the application doesn't exist, which throws `ApplicationNotFoundException` (a subclass of `CommandFailedException`); and `result=-1` triggers the hangup probe, because `EXEC` never gets a 511.
 
 All command methods except `command()` and `exec()` return a scalar, an enum, a small result object, or `void`. The per-command failure values come from the Asterisk 20 AGI documentation and `res_agi.c`; each one gets a test in the command tests.
 
@@ -137,7 +166,8 @@ src/
     StreamTransport.php      stdin/stdout (default)
   Protocol/
     CommandBuilder.php       single place for quoting/escaping arguments
-    ResponseParser.php       200 / 510 / 511 / 520 multi-line / HANGUP line
+    ResponseParser.php       200 / 510 / 511 / 520 multi-line / (hangup) markers / HANGUP line (custom transports)
+    HangupDetector.php       dead-safe command list, probe decision, isHungUp() state
   AbstractAgiDecorator.php   forwards every AgiInterface method to an inner instance (supported way to wrap Agi)
   Result/
     PlaybackResult.php       readonly; ?digit, endPosition
@@ -147,7 +177,7 @@ src/
     ChannelState.php
     DialStatus.php           DIALSTATUS values (Answer, Busy, NoAnswer, Cancel, Congestion, ChanUnavail, …)
     HangupCause.php          Q.850 cause codes
-    RecordingEndReason.php   Dtmf, Timeout, Silence, Hangup
+    RecordingEndReason.php   Dtmf, Timeout (time limit *or* silence; Asterisk reports both as "(timeout)"), Hangup
     ResultCode.php           200, 510, 511, 520
     TddMode.php              On, Off, Mate
   Exception/
@@ -181,7 +211,7 @@ Key points:
 
 `StreamTransport` blocks on reads **without a timeout by default, on purpose**:
 - AGI commands legitimately block for a long time: `EXEC Dial` lasts as long as the call, and `WAIT FOR DIGIT -1`, `RECORD FILE` and playback have no upper bound. Any default timeout would break valid calls.
-- If Asterisk exits or the channel's AGI pipe closes, the read returns EOF, which throws `ConnectionException`. A script doesn't hang on a dead Asterisk, only on a live one that never answers, which is an Asterisk bug.
+- If Asterisk exits or the channel's AGI pipe closes, the read returns EOF, which throws `ConnectionException`. A script doesn't hang on a dead Asterisk, only on a live one that never answers, which is an Asterisk bug. There's at least one such path in Asterisk 20: `handle_speechcreate()` returns failure without sending a response when an allocation fails. It's only reachable through `command('SPEECH CREATE', …)`, but it shows the opt-in timeout below is worth having.
 
 For that last case, `StreamTransport` takes an optional `?float $readTimeoutSeconds = null`, implemented with `stream_select()`. When it's set and expires, the read throws `ConnectionException` ("no response to <command> within N s"). The docs advise that callers who set it pick a value above their longest `Dial`/recording, or wrap only specific commands. `FakeTransport` has no timeouts; tests never wait.
 
@@ -189,7 +219,9 @@ For that last case, `StreamTransport` takes an optional `?float $readTimeoutSeco
 
 Consumers will build their test suites on it, so it must be strict and its failures must be easy to read.
 
-- **A script of expectations.** `$fake->expect('GET VARIABLE "FOO"')->respond('200 result=1 (bar)')`, in order. Helpers cover the common cases: `respondSuccess()`, `respondFailure()`, `respondNotFound()`, `hangUp()` (inject a `HANGUP` line), `respondDeadChannel()` (511) and `disconnect()` (EOF). Commands are matched exactly by default, and `expectMatching(callable|regex)` allows looser matching where needed.
+- **A script of expectations.** `$fake->expect('GET VARIABLE "FOO"')->respond('200 result=1 (bar)')`, in order. Helpers cover the common cases: `respondSuccess()`, `respondFailure()`, `respondNotFound()`, `respondDeadChannel()` (511) and `disconnect()` (EOF).
+- **`hangUp()` scripts what Asterisk really does.** `$fake->expect('STREAM FILE …')->hangUp()` answers the command with its failure value, then expects the `CHANNEL STATUS` probe and answers it with 511. After that, `FakeTransport` behaves like a dead channel: dead-safe commands are scripted as usual, and any other command must be scripted with `respondDeadChannel()`. For `RECORD FILE` and `RECEIVE CHAR`, `hangUp()` answers with their own `(hangup)` response instead, without a probe, exactly as Asterisk does. A separate `sendHangupLine()` covers FastAGI-style custom transports only.
+- **The probe is never implicit.** A test that triggers a failure value without scripting the probe fails with `UnexpectedCommandException` naming `CHANNEL STATUS`, so the extra exchange is always visible in tests. Commands are matched exactly by default, and `expectMatching(callable|regex)` allows looser matching where needed.
 - **An unexpected command fails loudly.** It throws `Testing\UnexpectedCommandException` with the step number, the **expected** and the **actual** command line on separate lines, and the remaining expectations.
 - **A finished script fails loudly too.** A command after the last expectation throws `Testing\ScriptExhaustedException`, showing the actual command and the list of commands already consumed.
 - **Leftover expectations are detectable.** `$fake->assertComplete()` throws when expectations weren't used. An optional PHPUnit trait (`Testing\PHPUnit\VerifiesFakeTransport`) calls it automatically after each test, while the core class stays independent of any test framework.
@@ -204,7 +236,8 @@ The library logs through the injected PSR-3 logger (`NullLogger` by default). It
 |---|---|---|
 | `debug` | every command sent, and every response received with its round-trip time | `command`, `code`, `result`, `data`, `durationMs`, `channel`, `uniqueId` |
 | `debug` | the parsed request header, once, at construction | `request` (the `raw` header array) |
-| `info` | the `HANGUP` notification, the first time it's seen | `channel`, `uniqueId`, `pendingCommand` |
+| `info` | the hangup, the first time it's detected (511, a `(hangup)` response, the probe, or a `HANGUP` line on a custom transport) | `channel`, `uniqueId`, `command`, `detectedBy` (`511`, `self-reported`, `probe`, `hangup-line`) |
+| `debug` | the probe itself, like any command, plus a line saying why it was sent | `command` (the original), `result` |
 | `warning` | protocol oddities the parser tolerates: stray blank lines, unknown `key=value` tokens, an unparseable `result` | `line`, `command` |
 
 - **Messages are constant**, with variable data only in the context array, e.g. `'AGI command sent'` + `['command' => …]`. Log aggregation can group them, and PSR-3 placeholders (`{command}`) are used where a human-readable message helps.
@@ -213,20 +246,20 @@ The library logs through the injected PSR-3 logger (`NullLogger` by default). It
 
 ## Public API (v3)
 
-Every method's return type and failure behavior, following [Command failures](#command-failures). "Throws" below means `CommandFailedException`, unless the channel is gone, in which case it's `ChannelHungUpException`. Rules 1 and 2 (protocol errors, dead channel) apply to every method and aren't repeated per row. Timeouts are in milliseconds (`…Ms`) for AGI commands, and in seconds where the dialplan application itself uses seconds (`…Seconds`).
+Every method's return type and failure behavior, following [Command failures](#command-failures). "Throws" below means `CommandFailedException`, unless the channel is gone, in which case it's `ChannelHungUpException`. For methods that aren't dead-safe, the library decides which of the two applies with the `CHANNEL STATUS` probe (see [Hangup handling](#hangup-handling-decided-channelhungupexception)). Methods marked **dead-safe** keep working after a hangup and never get a 511. Rules 1 and 2 (protocol errors, dead channel) apply to every method and aren't repeated per row. Timeouts are in milliseconds (`…Ms`) for AGI commands, and in seconds where the dialplan application itself uses seconds (`…Seconds`).
 
 ### Channel and dialplan flow
 
 | AGI command | 2.x | v3 signature | On failure / "nothing" |
 |---|---|---|---|
 | `ANSWER` | `answer()` | `answer(): void` | throws on `-1` |
-| `HANGUP` | `hangup($ch)` | `hangup(?string $channel = null): void` | own channel: never throws. Named channel that doesn't exist (`-1`): throws |
-| `EXEC Hangup(cause)` | `caused_hangup($c)` | `hangupWithCause(HangupCause $cause): void` | never throws (hanging up is the goal) |
+| `HANGUP` | `hangup($ch)` | `hangup(?string $channel = null): void` | own channel: never throws; a 511 (channel already gone) counts as success and sets `isHungUp()`. Named channel that doesn't exist (`-1`): throws |
+| `EXEC Hangup(cause)` | `caused_hangup($c)` | `hangupWithCause(HangupCause $cause): void` | never throws (hanging up is the goal). **Dead-safe** (via `EXEC`) |
 | `CHANNEL STATUS` | `channel_status($ch)` | `channelStatus(?string $channel = null): ?ChannelState` | `null` = no such channel (`-1`) |
-| `EXEC` | `exec($app, $opts)` | `exec(string $app, string\|int ...$args): AgiResponse` | `-2` → `ApplicationNotFoundException`; any other result is the application's own and returned raw. Arguments joined with `,` |
-| `EXEC Goto` | `exec_goto($c,$e,$p)` | `execGoto(string $context, string $extension, string\|int $priority = 1): void` | throws on failure. Priority may be a label |
+| `EXEC` | `exec($app, $opts)` | `exec(string $app, string\|int ...$args): AgiResponse` | `-2` → `ApplicationNotFoundException`; `-1` → probe, and `ChannelHungUpException` on 511; any other result is the application's own and returned raw. **Dead-safe**: runs after a hangup. Arguments joined with `,` |
+| `EXEC Goto` | `exec_goto($c,$e,$p)` | `execGoto(string $context, string $extension, string\|int $priority = 1): void` | throws on failure. Priority may be a label. **Dead-safe** (via `EXEC`): runs silently after a hangup |
 | `GOSUB` | — | `gosub(string $context, string $extension, string\|int $priority, string ...$args): void` | throws on `-1` |
-| `EXEC Dial` + `DIALSTATUS` | `exec_dial(...)` | `execDial(string $dialString, ?int $timeoutSeconds = null, string $options = ''): DialStatus` | reads `DIALSTATUS` after `Dial` finishes; a failed dial is a `DialStatus` value (`Busy`, `NoAnswer`, `Congestion`, `ChanUnavail`, …), not an exception |
+| `EXEC Dial` + `DIALSTATUS` | `exec_dial(...)` | `execDial(string $dialString, ?int $timeoutSeconds = null, string $options = ''): DialStatus` | reads `DIALSTATUS` after `Dial` finishes; a failed dial is a `DialStatus` value (`Busy`, `NoAnswer`, `Congestion`, `ChanUnavail`, …), not an exception. **When the caller hangs up an answered call**, `Dial` returns `-1` with `DIALSTATUS=ANSWER`: `execDial()` probes (setting `isHungUp()`) and still **returns** `DialStatus::Answer`. It never throws `ChannelHungUpException` itself |
 | `SET CONTEXT` | `set_context` | `setContext(string $context): void` | Asterisk always answers `0` |
 | `SET EXTENSION` | `set_extension` | `setExtension(string $extension): void` | always `0` |
 | `SET PRIORITY` | `set_priority` | `setPriority(int\|string $priority): void` | label or number; throws if a label can't be resolved |
@@ -263,14 +296,14 @@ Every method's return type and failure behavior, following [Command failures](#c
 | `SAY TIME` | `say_time` | `sayTime(int $timestamp, string $escapeDigits = ''): ?string` | key or `null` |
 | `SAY DATE` | — | `sayDate(int $timestamp, string $escapeDigits = ''): ?string` | key or `null` |
 | `SAY DATETIME` | — | `sayDateTime(int $timestamp, string $escapeDigits = '', ?string $format = null, ?string $timezone = null): ?string` | key or `null` |
-| `RECORD FILE` | `record_file` | `recordFile(string $file, string $format, string $escapeDigits = '', int $timeoutMs = -1, bool $beep = false, ?int $silenceSeconds = null, ?int $offset = null): RecordingResult` | throws on a recording error. A hangup during recording is **returned** (`endReason: Hangup`), not thrown; see [Hangup handling](#hangup-handling-decided-channelhungupexception) |
+| `RECORD FILE` | `record_file` | `recordFile(string $file, string $format, string $escapeDigits = '', int $timeoutMs = -1, bool $beep = false, ?int $silenceSeconds = null, ?int $offset = null): RecordingResult` | throws on a recording error (`(randomerror)`, `(writefile)`, `(waitfor)`). A hangup during recording is **returned** (`endReason: Hangup`, from Asterisk's own `(hangup)`, no probe), not thrown. `endReason: Timeout` covers both the time limit and silence detection: Asterisk reports both as `(timeout)`, so they can't be told apart; documented |
 | `SET MUSIC` | `set_music` | `setMusic(bool $enabled, string $class = ''): void` | always `0` |
 
 ### Text, TDD and logging
 
 | AGI command | 2.x | v3 signature | On failure / "nothing" |
 |---|---|---|---|
-| `RECEIVE CHAR` | `receive_char` | `receiveChar(int $timeoutMs = 0): ?string` | `null` = timeout or channel can't receive text (Asterisk answers `0` for both); throws on `-1` |
+| `RECEIVE CHAR` | `receive_char` | `receiveChar(int $timeoutMs = 0): ?string` | `null` = timeout or channel can't receive text (Asterisk answers `0` for both). `-1` is always reported as `(hangup)` → `ChannelHungUpException`, no probe |
 | `RECEIVE TEXT` | — | `receiveText(int $timeoutMs = 0): string` | throws on `-1` |
 | `SEND TEXT` | `send_text` | `sendText(string $text): void` | throws on `-1`. A channel without text support also answers `0`, so "sent" can't be confirmed; documented |
 | `SEND IMAGE` | `send_image` | `sendImage(string $image): void` | as `sendText()` |
@@ -286,7 +319,8 @@ Every method's return type and failure behavior, following [Command failures](#c
 | 2.x | v3 |
 |---|---|
 | `$agi->request['agi_*']` | `request(): AgiRequest` (`->channel`, `->extension`, `->arguments`, …) |
-| — | `isHungUp(): bool` |
+| — | `isHungUp(): bool` (what the library already knows; sends nothing) |
+| — | `checkHangup(): bool` (sends the `CHANNEL STATUS` probe and updates `isHungUp()`) |
 | `$res['result']`, `AGIRES_OK` | the typed return values above; `AgiResponse::isSuccess()` for `command()`/`exec()` |
 | `AST_STATE_*` | `ChannelState` |
 | `conlog()` | the injected PSR-3 logger |
@@ -300,7 +334,7 @@ Removed with no replacement: `menu`, `text_input`, `parse_callerid`, `text2wav`,
 - the `RECORD FILE` result format on hangup, silence and timeout, and its argument order;
 - `RECEIVE CHAR` and `SEND TEXT` on channels without text support;
 - `GET OPTION`, `CONTROL STREAM FILE` and `SAY ALPHA` case-sensitivity;
-- which commands are allowed on a dead channel.
+- ~~which commands are allowed on a dead channel~~ verified against Asterisk 20's `res_agi.c`; the list is in [Hangup handling](#hangup-handling-decided-channelhungupexception). The integration tests check it on 20 and 22, so a change in a later Asterisk version shows up as a failing test.
 
 If a result differs from the table, the table is updated in the same PR.
 
@@ -347,11 +381,18 @@ v3 takes concepts, not code, from other PHP AGI libraries:
 
 ## Testing
 
-- **Unit tests** for `ResponseParser` covering every response shape: `200 result=1 (data) endpos=123`, `200 result=-1`, `510 …`, `511 …`, the multi-line `520-…`/`520 End of proper usage.`, a stray blank line, the `HANGUP` notification, and EOF.
+- **Unit tests** for `ResponseParser` covering every response shape: `200 result=1 (data) endpos=123`, `200 result=-1`, `510 …`, `511 …`, the multi-line `520-…`/`520 End of proper usage.`, a stray blank line, the `(hangup)` markers of `RECORD FILE` and `RECEIVE CHAR`, the `HANGUP` line (custom transports only), and EOF.
+- **Unit tests** for `HangupDetector`: the dead-safe list, when a probe is sent (non-dead-safe failure values and `exec()` `-1`) and when not (dead-safe commands, self-reported hangups), and both probe outcomes.
 - **Unit tests** for `CommandBuilder` escaping: quotes, backslashes, newlines, empty strings, unicode.
-- **Command tests** for every public method: exact bytes written and the parsed result, using `FakeTransport`. Each method is tested for success, its "nothing" value (`null`/`false`), its failure value (→ `CommandFailedException`), a 511 and a failure after a `HANGUP` line (→ `ChannelHungUpException`), exactly as listed in the [Public API](#public-api-v3) tables. Because the library tests itself with the same tool consumers get, `FakeTransport` stays complete and correct.
+- **Command tests** for every public method: exact bytes written and the parsed result, using `FakeTransport`. Each method is tested for success, its "nothing" value (`null`/`false`), its failure value followed by a probe that shows the channel is up (→ `CommandFailedException`), its failure value followed by a 511 on the probe (→ `ChannelHungUpException`), and a direct 511 where the command isn't dead-safe, exactly as listed in the [Public API](#public-api-v3) tables. Because the library tests itself with the same tool consumers get, `FakeTransport` stays complete and correct.
 - **Migrate the 2.x characterization tests:** each still-relevant case is ported to v3 or deliberately dropped, recorded in the PR. The `known-bug` cases become normal tests asserting the fixed behavior.
-- **Integration tests:** a small dialplan runs the `examples/` and a test AGI script against a Local channel on a real Asterisk, including a hangup mid-script. Built in implementation step 8, so it's in place before the first beta.
+- **Integration tests:** a small dialplan runs the `examples/` and a test AGI script against a Local channel on a real Asterisk, including a hangup mid-script. It covers the hangup behavior that the unit tests only simulate, on real Asterisk 20 and 22, with `AGISIGHUP=no`:
+  - a hangup during `streamFile()` and `getData()` gives `ChannelHungUpException` via the probe;
+  - a hangup during `recordFile()` returns `endReason: Hangup` with the file on disk;
+  - a caller hanging up an answered `execDial()` returns `DialStatus::Answer`;
+  - every command in the dead-safe list still works after the hangup, and a sample of the others answers 511.
+
+  Built in implementation step 8, so it's in place before the first beta.
 - **Coverage:** line coverage of at least 90% on `src/`, and 100% on `Protocol/`, enforced in CI.
 - **Mutation testing** (Infection) on `Protocol/` and `Agi`, so the parser and command tests really pin behavior instead of only executing it.
 - How all of this runs automatically is described in [Continuous integration](#continuous-integration-github-actions).
@@ -431,7 +472,7 @@ Each step is one or more small commits on the `v3` branch, with tests passing at
 2. **Protocol core:** `Transport`, `StreamTransport` (with the optional read timeout), `FakeTransport` (with its strict failure behavior and the PHPUnit trait), `ResponseParser`, `CommandBuilder`, enums, exceptions, logging, plus tests.
 3. **`AgiRequest` + `Agi` constructor:** header parsing, `agi_arg_N`, EOF handling, `AgiRequestFactory`.
 4. **Commands:** grouped as channel/flow (answer, hangup, exec, goto, gosub, dial), variables/database, audio/DTMF (stream, record, say*, getData, waitForDigit), text/misc, and the generic `command()`. Return types and failure behavior follow the [Public API](#public-api-v3) tables and [Command failures](#command-failures), both settled before this step starts. Each group also adds its methods to `AbstractAgiDecorator`.
-5. **Hangup handling:** `HANGUP`-line state tracking, 511 → `ChannelHungUpException`, `isHungUp()`, and tests for a hangup mid-command, dead-channel-safe commands after a hangup, and `hangup()` followed by a command.
+5. **Hangup handling:** `HangupDetector` (dead-safe list, probe, self-reported `(hangup)`, `HANGUP` line for custom transports), 511 → `ChannelHungUpException`, `isHungUp()`, `checkHangup()`, `FakeTransport::hangUp()` scripting the failure value plus the 511 probe, and the per-method exceptions (`hangup()`, `recordFile()`, `execDial()`). Tests for a hangup mid-command, dead-safe commands after a hangup, and `hangup()` followed by a command.
 6. **Docs and examples:** README, `docs/` pages, `docs/UPGRADING-3.0.md`, `examples/`, CHANGELOG, CONTRIBUTING, SECURITY. Remove the old `docs/README.*`, `docs/README.phpagi-asmanager`, `docs/README.phpagi-fastagi` and `docs/fastagi.xinetd`.
 7. **Rector rule set** (`rector/phpagi-3.php`): the rules, before/after fixture files per rule, the `rector-fixtures` CI job, and the "what Rector can't do" list in the migration guide. Scope is in [Migration guide](#migration-guide-docsupgrading-30md), item 9. It's built after step 4, because it needs the final API.
 8. **Remaining CI:** the Asterisk test image and `asterisk-image.yml`, `integration.yml` (Asterisk 20 and 22), `mutation.yml` (Infection), the coverage thresholds, and `release.yml`.
@@ -449,7 +490,7 @@ A standalone guide for any 2.x user. It's written alongside the implementation, 
 3. **Other removals:** FastAGI/xinetd, TTS (`text2wav`, `swift`), fastpass helpers, `menu`, `text_input`, `parse_callerid`, `say_punctuation`, the global error handler and error emails, `phpagi.conf`, global constants. Each gets a one-line "do this instead".
 4. **Construction and bootstrapping:** `include 'phpagi.php'; new AGI()` → autoloading plus `new Agi(logger: …)`; injecting a logger.
 5. **Method mapping:** the full 2.x → 3.x table from [Public API (v3)](#public-api-v3), with the signature and return-type changes.
-6. **Behavior changes to watch for:** failed commands throw `CommandFailedException` instead of returning `result=-1`, and "not found" is `null`/`false`; `getVariable()` returns `?string`, not an array; `getData()` returns a `DtmfInput` (digits typed before a timeout are kept); playback and say methods return the key pressed instead of an ASCII code; `sayDigits()` takes a string; `exec()` is variadic and always uses `,`; `setVariable()` rejects `null`; `setGlobalVariable()` now actually works; and hangup handling (`ChannelHungUpException`, `isHungUp()`, and the `AGISIGHUP=no` requirement, with a dialplan example and a recommended top-level `try/catch`).
+6. **Behavior changes to watch for:** failed commands throw `CommandFailedException` instead of returning `result=-1`, and "not found" is `null`/`false`; `getVariable()` returns `?string`, not an array; `getData()` returns a `DtmfInput` (digits typed before a timeout are kept); playback and say methods return the key pressed instead of an ASCII code; `sayDigits()` takes a string; `exec()` is variadic and always uses `,`; `setVariable()` rejects `null`; `setGlobalVariable()` now actually works; and hangup handling (`ChannelHungUpException`, `isHungUp()`/`checkHangup()`, the `AGISIGHUP=no` requirement with a dialplan example and a recommended top-level `try/catch`, the list of commands that keep running after a hangup, including everything built on `EXEC`, and the extra `CHANNEL STATUS` probe visible in Asterisk's AGI debug output).
 7. **Request and responses:** `$agi->request['agi_*']` → `$agi->request()->…`; `$res['result']`/`AGIRES_OK` → `AgiResponse`; `AST_STATE_*` → `ChannelState`; hangup cause codes → `HangupCause`.
 8. **Testing and wrapping your code:** use `FakeTransport` for realistic tests, or mock `AgiInterface` (not the final `Agi` class), and make sure mocks return values the real methods can return. To wrap `Agi`, extend `AbstractAgiDecorator` instead of implementing `AgiInterface` yourself, since the interface may gain methods in minor releases.
 9. **Automated upgrade, with a deliberately modest scope.** A Rector rule set ships in the repository (`rector/phpagi-3.php`), tested against fixture files (built in implementation step 7). It does the purely mechanical work and marks the rest; it doesn't pretend to migrate everything.
@@ -484,4 +525,6 @@ A standalone guide for any 2.x user. It's written alongside the implementation, 
 | The name `pegamento/phpagi` gets taken on Packagist before we publish | claim it in step 0 by publishing 2.30.0 there |
 | A stuck (but alive) Asterisk blocks a script forever | the documented opt-in read timeout on `StreamTransport` |
 | Users over-trust the Rector rule set | its scope is explicit, everything it can't do gets a `TODO(phpagi-3)` marker, and the guide has the grep to find them |
-| A hangup exception escaping from hangup handlers in user code | document the dead-channel-safe commands and the recommended entry-point `try/catch`; cover it in `examples/hangup-handling.php` |
+| A hangup exception escaping from hangup handlers in user code | document the dead-safe commands and the recommended entry-point `try/catch`; cover it in `examples/hangup-handling.php` |
+| A call flow keeps running after a hangup because it only uses dead-safe commands (`exec()` chains, variables, database) | rule 4 probes `exec()` on `-1`; the docs list the dead-safe commands and recommend `checkHangup()` in such stretches; the integration tests pin the behavior |
+| Asterisk changes its hangup signalling or the dead-safe list in a later version | the integration job runs on 20 and 22 and pins both behaviors; new Asterisk LTS versions are added to it |
