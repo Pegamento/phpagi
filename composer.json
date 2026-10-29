@@ -9,5 +9,24 @@
             "src/phpagi-asmanager.php"
         ]
     },
-    "require": {}
+    "require": {
+        "php": ">=8.4"
+    },
+    "config": {
+        "platform": {
+            "php": "8.4"
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^12.5"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PhpAgi\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test:known-bugs": "phpunit --group known-bug"
+    }
 }
