@@ -16,9 +16,9 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 |---|---|---|---|---|---|
 | WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` (deleted) | accepted |
 | WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` (deleted) | accepted |
-| WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | `v3-wp-03-contracts` | in progress |
+| WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | `v3-wp-03-contracts` (deleted) | accepted |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
-| WP-05 | 2 | `ResponseParser` | WP-03 | | ready |
+| WP-05 | 2 | `ResponseParser` | WP-08 | | ready |
 | WP-06 | 2 | `CommandBuilder` | WP-03 | | ready |
 | WP-07 | 2 | Enums | WP-03 | | ready |
 | WP-08 | 2 | Result objects | WP-03 | | ready |
@@ -63,7 +63,8 @@ Later steps stay at this granularity until their step starts. Parallel groups ar
 | D12 | The coverage job runs PHPUnit with PCOV and uploads the Clover artifact. No threshold and no Codecov. | Coverage thresholds arrive in step 8; Codecov is optional | WP-22 owns the threshold. Codecov would need a secret. |
 | D13 | `next-php` uses setup-php `nightly` and `continue-on-error: true`. | "an allowed-to-fail job on the upcoming PHP version (nightly or RC builds)" | 8.5 is a required version, so the upcoming line is nightly. |
 | D14 | `Transport::writeLine(string $command): void` writes that string plus a newline. `Transport::readLine(): string` returns the line without the terminator. Both throw `ConnectionException` on failure, including EOF. | Architecture: `writeLine()`, `readLine()`; read timeouts and EOF throw `ConnectionException` | The plan names the methods and the failure type, not the newline rule. One rule keeps every transport interchangeable. |
-| D15 | WP-03 freezes the exception hierarchy and marker interface. Classes are not `final`, because minors may add subclasses. `AgiException` is abstract and extends `\RuntimeException`. `ChannelHungUpException` extends `\RuntimeException` directly, implements `AgiThrowable`, and does not extend `AgiException`. It is constructed with the command, channel, and unique id. `CommandFailedException` is constructed with the command, channel, and message; the `AgiResponse` argument arrives in WP-08 with that type. | Exception hierarchy; BC promise: new subclasses may be added | The plan does not name `AgiException`'s parent. `\RuntimeException` matches connection failures and commands that ran and failed. `AgiResponse` belongs to WP-08, so the failure exception cannot require it yet. |
+| D15 | WP-03 freezes the exception hierarchy and marker interface. Classes are not `final`, because minors may add subclasses. `AgiException` is abstract and extends `\RuntimeException`. `ChannelHungUpException` extends `\RuntimeException` directly, implements `AgiThrowable`, and does not extend `AgiException`. It is constructed with the command, channel, and unique id. Its message is `Channel hung up during command: %s`. `CommandFailedException` is constructed with the command, channel, and message; the `AgiResponse` argument arrives in WP-08 with that type. | Exception hierarchy; BC promise: new subclasses may be added | The plan does not name `AgiException`'s parent or the hangup sentence. `\RuntimeException` matches connection failures and commands that ran and failed. `AgiResponse` belongs to WP-08, so the failure exception cannot require it yet. |
+| D17 | `ResponseParser` (WP-05) waits for `AgiResponse` (WP-08). The other step-2 packages still run in parallel after WP-03. | Step 2 parallelization; `AgiResponse` is a result object | The parser's return type is `AgiResponse`. Separate branches cannot type that until WP-08 is on `v3`. |
 
 ## Open questions
 
