@@ -37,10 +37,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-${{ matrix.php }}-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-${{ matrix.php }}-
@@ -66,14 +70,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          status="$(grep '^status=' guard.out | cut -d= -f2-)"
-          lag_days="$(grep '^lag_days=' guard.out | cut -d= -f2-)"
-          if [ "$status" != "behind" ] || [ -z "$lag_days" ] || [ "$lag_days" -le 7 ] 2>/dev/null; then
+          status="$(grep '^status=' guard.out | cut -d= -f2- || true)"
+          lag_days="$(grep '^lag_days=' guard.out | cut -d= -f2- || true)"
+          if [ "$status" != "behind" ] || [ -z "$lag_days" ] || ! [[ "$lag_days" =~ ^[0-9]+$ ]] || [ "$lag_days" -le 7 ]; then
             exit 0
           fi
-          installed="$(grep '^installed=' guard.out | cut -d= -f2-)"
-          latest="$(grep '^latest=' guard.out | cut -d= -f2-)"
-          release_date="$(grep '^release_date=' guard.out | cut -d= -f2-)"
+          installed="$(grep '^installed=' guard.out | cut -d= -f2- || true)"
+          latest="$(grep '^latest=' guard.out | cut -d= -f2- || true)"
+          release_date="$(grep '^release_date=' guard.out | cut -d= -f2- || true)"
           title="CI is behind php.net PHP ${{ matrix.php }}"
           body="$(cat <<EOF
           Weekly CI detected that the PHP patch level is more than 7 days behind php.net.
@@ -84,7 +88,7 @@ jobs:
           - Lag (days): ${lag_days}
           EOF
           )"
-          existing="$(gh issue list --state open --json number,title --jq ".[] | select(.title==\"${title}\") | .number" | head -n1)"
+          existing="$(gh issue list --state open --json number,title --jq "[.[] | select(.title==\"${title}\") | .number][0] // empty")"
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"
           else
@@ -101,8 +105,13 @@ jobs:
         run: |
           title="CI weekly failure (PHP ${{ matrix.php }})"
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          body="The scheduled CI run failed for PHP ${{ matrix.php }}.\n\nRun: ${run_url}"
-          existing="$(gh issue list --state open --json number,title --jq ".[] | select(.title==\"${title}\") | .number" | head -n1)"
+          body="$(cat <<EOF
+          The scheduled CI run failed for PHP ${{ matrix.php }}.
+
+          Run: ${run_url}
+          EOF
+          )"
+          existing="$(gh issue list --state open --json number,title --jq "[.[] | select(.title==\"${title}\") | .number][0] // empty")"
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"
           else
@@ -127,10 +136,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-8.4-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-8.4-
@@ -161,10 +174,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-${{ matrix.php }}-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-${{ matrix.php }}-
@@ -193,10 +210,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-8.5-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-8.5-
@@ -225,10 +246,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-8.5-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-8.5-
@@ -260,10 +285,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-8.5-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-8.5-
@@ -311,10 +340,14 @@ jobs:
           php -v
           php -m
 
+      - name: Resolve Composer cache directory
+        id: composer_cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer_cache.outputs.dir }}
           key: composer-nightly-${{ hashFiles('composer.json') }}
           restore-keys: |
             composer-nightly-
