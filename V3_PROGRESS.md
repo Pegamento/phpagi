@@ -2,7 +2,7 @@
 
 Director board for steps 1–8 of `docs/v3-plan.md`. Removed before the beta (step 9, human).
 
-Local `v3` is `3958e18`, the same commit as `origin/v3-plan`. There is no `origin/v3`. The working tree was clean apart from the untracked director prompt, which stays untracked.
+`v3` started at `3958e18`, the same commit as `origin/v3-plan`. There is no `origin/v3`. The director prompt stays untracked. WP-01 is merged (`43d8958`) and the branch is deleted. Text files check out as LF (`3562cc5`).
 
 Local PHP is 8.4.27. PHP 8.5 is not installed here; 8.5 verification is the CI job once `ci.yml` exists.
 
@@ -12,7 +12,7 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 
 | WP | Step | Title | Depends on | Branch | Status |
 |---|---|---|---|---|---|
-| WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` | in review |
+| WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` (deleted) | accepted |
 | WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | ready |
 | WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | | ready |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
@@ -50,9 +50,10 @@ Later steps stay at this granularity until their step starts. Parallel groups ar
 | D1 | Code style is PHP-CS-Fixer (`friendsofphp/php-cs-fixer`) at PSR-12, checked with `fix --dry-run --diff`. | Continuous integration: "PHP-CS-Fixer or PHP_CodeSniffer (PSR-12) in check mode" | The plan allows either. PHP-CS-Fixer is the first named tool and has a dry-run check mode. No rules beyond PSR-12. |
 | D2 | Test namespace is `Pegamento\PhpAgi\Tests\`, PSR-4, `tests/`. | Namespace / autoload: `Pegamento\PhpAgi\`, PSR-4, `src/` | The plan names the library namespace and not the test namespace. The 2.x `PhpAgi\Tests\` namespace goes away with the 2.x tests. |
 | D3 | `ergebnis/composer-normalize` is a WP-01 dev dependency. | `ci.yml` job **composer**: `composer normalize --dry-run` | The plan requires that command in CI. `composer.json` belongs to WP-01, so the tool lands there and WP-02 only adds the workflow. |
-| D4 | WP-01 adds `tests/BootstrapTest.php`. It is not a port of a 2.x test. The bootstrap calls `error_reporting(E_ALL)` and records that level; the test asserts the recorded level. | Step 1: remove the 2.x tests and port nothing; PHP 8.5 compatibility: the test bootstrap sets `error_reporting(E_ALL)` | PHPUnit 12 fails an empty suite. PHPUnit's `ErrorHandler` masks `error_reporting()` for the duration of each test (`original & UNHANDLEABLE_LEVELS`), so a direct assertion inside the test cannot see `E_ALL`. The CLI default here is `22527`, not `E_ALL` (`30719`), so a snapshot taken in the bootstrap fails if that call is removed. |
+| D4 | WP-01 adds `tests/BootstrapTest.php`. It is not a port of a 2.x test. The bootstrap calls `error_reporting(E_ALL)` and records that level; the test asserts the recorded level. PHPStan's `bootstrapFiles` loads that bootstrap so the constant exists during analysis. | Step 1: remove the 2.x tests and port nothing; PHP 8.5 compatibility: the test bootstrap sets `error_reporting(E_ALL)` | PHPUnit 12 fails an empty suite. PHPUnit's `ErrorHandler` masks `error_reporting()` for the duration of each test (`original & UNHANDLEABLE_LEVELS`), so a direct assertion inside the test cannot see `E_ALL`. The CLI default here is `22527`, not `E_ALL` (`30719`), so a snapshot taken in the bootstrap fails if that call is removed. |
 | D5 | The `config.platform.php` 8.4 pin is removed. No `composer.lock`. | PHP 8.5 compatibility: remove the pin, or keep it only for lock-file generation; the library does not commit a lock file | There is no lock file to generate, so the pin has nothing to pin. |
 | D6 | Work-package branches are `v3-wp-<nn>-<slug>`, not `v3/wp-<nn>-<slug>`. Push only `v3` and `v3-wp-*`. | Director operating model: branch `v3/wp-<nn>-<slug>` | Git stores branch `v3` as `refs/heads/v3`, so it cannot also create `refs/heads/v3/wp-…`. The hyphen keeps the same prefix and the same push limit. |
+| D7 | `.gitattributes` sets `* text=auto eol=lf`. | Code style check must pass where the work is reviewed | This machine has `core.autocrlf=true`. Git stored LF and checked out CRLF, so PHP-CS-Fixer failed on the integrated tree. `eol=lf` checks text out as LF without changing git config. |
 
 ## Open questions
 
