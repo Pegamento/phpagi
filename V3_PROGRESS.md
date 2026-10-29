@@ -2,7 +2,7 @@
 
 Director board for steps 1–8 of `docs/v3-plan.md`. Removed before the beta (step 9, human).
 
-`v3` started at `3958e18`, the same commit as `origin/v3-plan`. There is no `origin/v3`. The director prompt stays untracked. WP-01 is merged (`43d8958`) and the branch is deleted. Text files check out as LF (`3562cc5`).
+`v3` started at `3958e18`, the same commit as `origin/v3-plan`. There is no `origin/v3` until it is pushed. The director prompt stays untracked. WP-01 is merged (`43d8958`). WP-02 is merged (`2e37186`). Both work-package branches are deleted. Text files check out as LF (`3562cc5`).
 
 Local PHP is 8.4.27. PHP 8.5 is not installed here; 8.5 verification is the CI job once `ci.yml` exists.
 
@@ -13,7 +13,7 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 | WP | Step | Title | Depends on | Branch | Status |
 |---|---|---|---|---|---|
 | WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` (deleted) | accepted |
-| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | in review |
+| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` (deleted) | accepted |
 | WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | | ready |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
 | WP-05 | 2 | `ResponseParser` | WP-03 | | ready |
@@ -77,19 +77,22 @@ Not this board's work. Listed so they are not lost.
 
 **Step 9:** tag or release `3.0.0-beta.1` or `3.0.0`, publish, announce.
 
-**Branch protection** (after WP-02, human): require every `ci.yml` job except `next-php` and any optional Codecov upload. Exact GitHub check names are filled in here when WP-02 lands. Planned job names from the plan:
+**Branch protection** (human): require these checks from `ci.yml`. `next-php (nightly)` is allowed to fail and is not required. There is no Codecov upload.
 
-- `tests` (PHP 8.4 and 8.5)
-- `tests-lowest`
-- `static-analysis` (PHP 8.4 and 8.5)
-- `code-style`
-- `composer`
-- `coverage` (thresholds arrive in WP-22)
-- `rector-fixtures` (job arrives in WP-19)
+- `tests (PHP 8.4)`
+- `tests (PHP 8.5)`
+- `tests-lowest (PHP 8.4)`
+- `static-analysis (PHP 8.4)`
+- `static-analysis (PHP 8.5)`
+- `code-style (PHP 8.5)`
+- `composer (PHP 8.5)`
+- `coverage (PHP 8.5)`
+
+Not created yet, so not required until their work packages land:
+
+- `rector-fixtures` (WP-19)
 - `integration.yml` / `asterisk` (WP-21)
 - `mutation.yml` / `infection` (WP-22)
-
-`next-php` stays allowed to fail and is not required.
 
 ## 2.x test port table
 
