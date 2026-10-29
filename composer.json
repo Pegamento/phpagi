@@ -1,32 +1,37 @@
 {
     "name": "pegamento/phpagi",
-    "description": "PHPAGI is a PHP class for the Asterisk Gateway Interface.",
-    "type": "library",
+    "description": "AGI client for Asterisk.",
     "license": "LGPL-2.1-or-later",
-    "autoload": {
-        "classmap": [
-            "src/phpagi.php",
-            "src/phpagi-asmanager.php"
-        ]
-    },
+    "type": "library",
     "require": {
-        "php": ">=8.4"
-    },
-    "config": {
-        "platform": {
-            "php": "8.4"
-        }
+        "php": "^8.4",
+        "psr/log": "^3.0"
     },
     "require-dev": {
+        "ergebnis/composer-normalize": "^2.55",
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "phpstan/phpstan": "^2.3",
         "phpunit/phpunit": "^12.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pegamento\\PhpAgi\\": "src/"
+        }
     },
     "autoload-dev": {
         "psr-4": {
-            "PhpAgi\\Tests\\": "tests/"
+            "Pegamento\\PhpAgi\\Tests\\": "tests/"
         }
     },
+    "config": {
+        "allow-plugins": {
+            "ergebnis/composer-normalize": true
+        },
+        "sort-packages": true
+    },
     "scripts": {
-        "test": "phpunit",
-        "test:known-bugs": "phpunit --group known-bug"
+        "cs-check": "php-cs-fixer fix --dry-run --diff",
+        "phpstan": "phpstan analyse --memory-limit=1G",
+        "test": "phpunit"
     }
 }
