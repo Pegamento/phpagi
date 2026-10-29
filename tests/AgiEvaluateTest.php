@@ -98,7 +98,9 @@ class AgiEvaluateTest extends AgiTestCase
 
     public function testReturnsBrokenWhenAsteriskStopsAnswering(): void
     {
-        $agi = $this->makeAgi([]); // EOF: every read returns false
+        // EOF: fgets() returns false and evaluate() passes it to trim(). That is only coerced to ''
+        // because phpagi.php is not strict_types; this must keep passing once it is.
+        $agi = $this->makeAgi([]);
 
         $this->assertSame(['code' => 500, 'result' => -1, 'data' => ''], $agi->evaluate('ANSWER'));
     }

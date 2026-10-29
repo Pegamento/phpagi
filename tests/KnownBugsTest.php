@@ -5,6 +5,7 @@ namespace PhpAgi\Tests;
 use AGI;
 use PhpAgi\Tests\Support\AmiTestCase;
 use PhpAgi\Tests\Support\ChildProcess;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 
 /**
@@ -43,6 +44,40 @@ class KnownBugsTest extends AmiTestCase
         $this->reply('Response: Success', 'ActionID: A1', 'Variable: FOO', 'Value: bar');
 
         $this->assertSame('bar', $this->manager->GetVar('SIP/1', 'FOO')['Value'] ?? null);
+    }
+
+    public static function commandEndMarkerOnOwnLineProvider(): array
+    {
+        return [
+            'empty output' => [
+                ['Response: Follows', 'Privilege: Command', 'ActionID: A1', '--END COMMAND--'],
+                '',
+            ],
+            'output on its own line' => [
+                [
+                    'Response: Follows',
+                    'Privilege: Command',
+                    'ActionID: A1',
+                    'Asterisk 1.8.32.3 built by root',
+                    '--END COMMAND--',
+                ],
+                'Asterisk 1.8.32.3 built by root',
+            ],
+        ];
+    }
+
+    /**
+     * read_one_msg() takes the output from the record that holds '--END COMMAND--' and cuts
+     * one character before the marker. When the marker is its own \r\n line (no output, or
+     * \r\n-terminated output), that yields '--END COMMAND-' and the output line is parsed
+     * as a header instead.
+     */
+    #[DataProvider('commandEndMarkerOnOwnLineProvider')]
+    public function testCommandReturnsOutputWhenEndMarkerIsOnItsOwnLine(array $replyLines, string $expected): void
+    {
+        $this->reply(...$replyLines);
+
+        $this->assertSame($expected, $this->manager->Command('core show version')['data'] ?? null);
     }
 
     /**
