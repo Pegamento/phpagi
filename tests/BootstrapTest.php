@@ -8,14 +8,8 @@ use PHPUnit\Framework\TestCase;
 
 final class BootstrapTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        error_reporting(E_ALL);
-    }
-
     public function testErrorReportingIsAll(): void
     {
-        self::assertSame(E_ALL, error_reporting());
+        self::assertSame(E_ALL, PEGAMENTO_PHPAGI_BOOTSTRAP_ERROR_REPORTING);
     }
 }
