@@ -2,7 +2,9 @@
 
 Director board for steps 1–8 of `docs/v3-plan.md`. Removed before the beta (step 9, human).
 
-`v3` started at `3958e18`, the same commit as `origin/v3-plan`. There is no `origin/v3` until it is pushed. The director prompt stays untracked. WP-01 is merged (`43d8958`). WP-02 is merged (`2e37186`). Both work-package branches are deleted. Text files check out as LF (`3562cc5`).
+`v3` started at `3958e18`, the same commit as `origin/v3-plan`, and is pushed to `origin/v3`. The director prompt stays untracked. WP-01 is merged (`43d8958`). WP-02 is merged (`2e37186`). Both work-package branches are deleted. Text files check out as LF (`3562cc5`).
+
+CI run [40896358257](https://github.com/Pegamento/phpagi/actions/runs/40896358257) succeeded. Every required job passed on PHP 8.4 and 8.5. `next-php (nightly)` failed, as allowed: PHP 8.6.0-dev is outside the constraint of `localheinz/diff` 1.3.0 (`~8.5.0` is its top), pulled in by `ergebnis/composer-normalize`. That is the early warning the job exists for. It does not block step 1.
 
 Local PHP is 8.4.27. PHP 8.5 is not installed here; 8.5 verification is the CI job once `ci.yml` exists.
 
@@ -14,7 +16,7 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 |---|---|---|---|---|---|
 | WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` (deleted) | accepted |
 | WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` (deleted) | accepted |
-| WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | | ready |
+| WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | `v3-wp-03-contracts` | in progress |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
 | WP-05 | 2 | `ResponseParser` | WP-03 | | ready |
 | WP-06 | 2 | `CommandBuilder` | WP-03 | | ready |
@@ -60,6 +62,8 @@ Later steps stay at this granularity until their step starts. Parallel groups ar
 | D11 | Dependabot's Composer updates are limited to development dependencies. | "Dependabot keeps GitHub Actions versions and Composer dev dependencies up to date" | The plan names dev dependencies. `psr/log` stays a manual bump. |
 | D12 | The coverage job runs PHPUnit with PCOV and uploads the Clover artifact. No threshold and no Codecov. | Coverage thresholds arrive in step 8; Codecov is optional | WP-22 owns the threshold. Codecov would need a secret. |
 | D13 | `next-php` uses setup-php `nightly` and `continue-on-error: true`. | "an allowed-to-fail job on the upcoming PHP version (nightly or RC builds)" | 8.5 is a required version, so the upcoming line is nightly. |
+| D14 | `Transport::writeLine(string $command): void` writes that string plus a newline. `Transport::readLine(): string` returns the line without the terminator. Both throw `ConnectionException` on failure, including EOF. | Architecture: `writeLine()`, `readLine()`; read timeouts and EOF throw `ConnectionException` | The plan names the methods and the failure type, not the newline rule. One rule keeps every transport interchangeable. |
+| D15 | WP-03 freezes the exception hierarchy and marker interface. Classes are not `final`, because minors may add subclasses. `AgiException` is abstract. `ChannelHungUpException` is constructed with the command, channel, and unique id. `CommandFailedException` is constructed with the command, channel, and message; the `AgiResponse` argument arrives in WP-08 with that type. | Exception hierarchy; BC promise: new subclasses may be added | `AgiResponse` belongs to WP-08, so the failure exception cannot require it yet. The constructor can grow before 3.0.0. |
 
 ## Open questions
 
