@@ -34,7 +34,7 @@ Status: all design decisions taken; ready for review. Nothing here is implemente
 | Extensibility | a public `command(string $name, string\|int ...$args): AgiResponse` for AGI commands without a dedicated method (new or rarely used ones), going through the same escaping and parsing |
 | Versioning | SemVer. Raising the minimum PHP or Asterisk version only happens in a new major. A `CHANGELOG.md` in Keep a Changelog format |
 | Migration guide | `docs/UPGRADING-3.0.md` ships with 3.0.0 (see [Migration guide](#migration-guide-docsupgrading-30md)) |
-| Quality | PHPStan max level, PSR-12 code style, PHPUnit 12, CI on PHP 8.4 and 8.5, where any deprecation, notice or warning fails the build |
+| Quality | PHPStan max level, PSR-12 code style, PHPUnit 12, and GitHub Actions CI on the **latest patch releases of PHP 8.4 and 8.5**, where any deprecation, notice or warning fails the build (see [Continuous integration](#continuous-integration-github-actions)) |
 
 ## Support policy
 
@@ -67,7 +67,7 @@ v3 must run unchanged and silently on both PHP 8.4 and 8.5. "Works on 8.5" isn't
 - **Tooling enforces it:**
   - PHPUnit runs with `failOnDeprecation`, `failOnNotice`, `failOnWarning` and `failOnPhpunitDeprecation` enabled, and the test bootstrap sets `error_reporting(E_ALL)`.
   - PHPStan's `phpVersion` is set to the range `80400`–`80599`, so it flags both 8.5-only APIs and anything removed or deprecated in that range.
-  - CI runs the full suite on 8.4 and 8.5. A green run on both is the release gate.
+  - CI runs the full suite on the latest 8.4 and 8.5 patch releases. A green run on both is the release gate (see [Continuous integration](#continuous-integration-github-actions)).
 - **Dependencies:** every runtime and dev dependency (`psr/log`, PHPUnit 12, PHPStan) must declare 8.5 support. CI installs on 8.5 without `--ignore-platform-reqs`. Remove the `config.platform.php = 8.4` pin from `composer.json`, or keep it only for lock-file generation, and run CI with `composer update` per PHP version, so 8.5 resolves its own dependency versions. As a library, phpagi doesn't commit a `composer.lock`.
 
 ## Hangup handling (decided: `ChannelHungUpException`)
@@ -206,21 +206,60 @@ v3 takes concepts, not code, from other PHP AGI libraries:
 - **Unit tests** for `CommandBuilder` escaping: quotes, backslashes, newlines, empty strings, unicode.
 - **Command tests** for every public method: exact bytes written and the parsed result, using `FakeTransport`. Because the library tests itself with the same tool consumers get, `FakeTransport` stays complete and correct.
 - **Migrate the 2.x characterization tests:** each still-relevant case is ported to v3 or deliberately dropped, recorded in the PR. The `known-bug` cases become normal tests asserting the fixed behavior.
-- **Integration job:** run Asterisk 20 (and 22) in Docker in CI, with a small dialplan that runs the `examples/` and a test AGI script against a Local channel, including a hangup mid-script. Nice to have for the first beta, required before 3.0.0.
-- PHPStan max and code style checks in CI.
-- The full suite runs on PHP 8.4 and 8.5, with deprecations, notices and warnings failing the run (see [PHP 8.5 compatibility](#php-85-compatibility)).
+- **Integration tests:** a small dialplan runs the `examples/` and a test AGI script against a Local channel on a real Asterisk, including a hangup mid-script. Nice to have for the first beta, required before 3.0.0.
+- **Coverage:** line coverage of at least 90% on `src/`, and 100% on `Protocol/`, enforced in CI.
+- **Mutation testing** (Infection) on `Protocol/` and `Agi`, so the parser and command tests really pin behavior instead of only executing it.
+- How all of this runs automatically is described in [Continuous integration](#continuous-integration-github-actions).
+
+## Continuous integration (GitHub Actions)
+
+Everything runs on GitHub Actions, on every push and pull request, plus a weekly scheduled run. Workflows live in `.github/workflows/`.
+
+### PHP versions: always the latest patch releases
+
+- The matrix targets **PHP 8.4.latest** and **PHP 8.5.latest**, via `shivammathur/setup-php` with `php-version: '8.4'` / `'8.5'`, which installs the newest available patch release of each line.
+- **Version guard:** a step compares the installed `PHP_VERSION` with the newest release that php.net publishes (`https://www.php.net/releases/?json&version=8.4`, and the same for 8.5). If CI runs an older patch than php.net lists, the job fails with a clear message. That way "latest" is verified, not assumed. Because the setup-php builds can trail a php.net release by a day or two, the guard only fails once the newer release is more than 7 days old (php.net's JSON includes the release date); before that it just writes a warning.
+- Each job prints `php -v` and the loaded extensions in its log, so every run records exactly which patch release it tested.
+- The **weekly scheduled run** (Monday morning) catches new PHP patch releases and new dependency releases, even when nobody pushes. A failure opens or updates a GitHub issue automatically.
+- **Next PHP version:** an allowed-to-fail job on the upcoming PHP version (nightly or RC builds) gives early warning before it's released. Once it's GA, it joins the required matrix (see [Support policy](#support-policy)).
+
+### Workflows and jobs
+
+| Workflow | Job | PHP | What it checks |
+|---|---|---|---|
+| `ci.yml` | **tests** | 8.4.latest, 8.5.latest | PHPUnit, full suite; deprecations, notices and warnings fail the run |
+| | **tests-lowest** | 8.4.latest | `composer update --prefer-lowest --prefer-stable` and PHPUnit, proving the declared minimum dependency versions really work |
+| | **static-analysis** | 8.4.latest, 8.5.latest | PHPStan max level, with `phpVersion` matching the job's PHP |
+| | **code-style** | 8.5.latest | PHP-CS-Fixer or PHP_CodeSniffer (PSR-12) in check mode |
+| | **coverage** | 8.5.latest | PHPUnit with PCOV, enforcing the coverage thresholds; coverage report uploaded as an artifact (optionally to Codecov) |
+| | **composer** | 8.5.latest | `composer validate --strict`, `composer audit` (known vulnerabilities in dependencies), `composer normalize --dry-run` |
+| | **rector-fixtures** | 8.5.latest | the 2.x → 3.x Rector rule set against its before/after fixture files |
+| | **next-php** (allowed to fail) | nightly/RC | the PHPUnit suite on the upcoming PHP version |
+| `integration.yml` | **asterisk** | 8.4.latest, 8.5.latest × Asterisk 20, 22 | starts Asterisk in a Docker service container with a test dialplan, runs `examples/` and the integration AGI scripts over real channels (including a hangup mid-script), and checks the expected results in the Asterisk log/CDR |
+| `mutation.yml` | **infection** | 8.5.latest | Infection on `Protocol/` and `Agi`, with a minimum mutation score (MSI); weekly plus on PRs that touch `src/` |
+| `release.yml` | **release** | 8.4.latest, 8.5.latest | on a `v*` tag: reruns the whole of `ci.yml` and `integration.yml`, checks that `CHANGELOG.md` has an entry for the tag, then creates the GitHub release with that entry. Packagist updates through its GitHub hook |
+
+### Rules
+
+- **Required checks:** branch protection on `master` requires every job above except `next-php` and the optional Codecov upload. Nothing merges with a red or skipped required job.
+- **Fail fast off, concurrency on:** `fail-fast: false`, so one PHP version's failure doesn't hide the other's result; in-progress runs for the same branch are cancelled when a new push arrives.
+- **Caching:** Composer's cache directory is cached per PHP version and `composer.json` hash, to keep runs fast without a committed `composer.lock`.
+- **Dependabot** keeps GitHub Actions versions and Composer dev dependencies up to date, with weekly PRs that run through the same CI.
+- **Pinned actions:** third-party actions are pinned to a full commit SHA, with the version in a comment (Dependabot updates them).
+- **Minimal permissions:** workflows default to `permissions: contents: read`; only `release.yml` gets `contents: write`.
+- **Status badges** for `ci.yml` and `integration.yml` in the README.
 
 ## Implementation steps
 
 Each step is one or more small commits on a `v3` branch (from `master`, once the PHPUnit work is merged), with tests passing at every commit.
 
-1. **Skeleton:** `composer.json` (PSR-4, `psr/log`, `php: ^8.4`, so 8.5 is allowed), strict types, PHPStan config (`phpVersion` 8.4–8.5), code style config, PHPUnit strict-deprecation settings, CI matrix 8.4 + 8.5. Move the 2.x sources to the `2.x` branch.
+1. **Skeleton:** `composer.json` (PSR-4, `psr/log`, `php: ^8.4`, so 8.5 is allowed), strict types, PHPStan config (`phpVersion` 8.4–8.5), code style config, PHPUnit strict-deprecation settings. GitHub Actions `ci.yml` with the 8.4.latest/8.5.latest matrix, the version guard, the weekly schedule, Dependabot and branch protection, from the very first commit, so every later step is tested automatically. Move the 2.x sources to the `2.x` branch.
 2. **Protocol core:** `Transport`, `StreamTransport`, `FakeTransport`, `ResponseParser`, `CommandBuilder`, enums, exceptions, plus tests.
 3. **`AgiRequest` + `Agi` constructor:** header parsing, `agi_arg_N`, EOF handling, `AgiRequestFactory`.
 4. **Commands:** grouped as channel/flow (answer, hangup, exec, goto, dial), variables/database, audio/DTMF (stream, record, say*, getData, waitForDigit), misc, and the generic `command()`.
 5. **Hangup handling:** `HANGUP`-line state tracking, 511 → `ChannelHungUpException`, `isHungUp()`, and tests for a hangup mid-command, dead-channel-safe commands after a hangup, and `hangup()` followed by a command.
 6. **Docs and examples:** README, `docs/` pages, `docs/UPGRADING-3.0.md`, `examples/`, CHANGELOG, CONTRIBUTING, SECURITY. Remove the old `docs/README.*`, `docs/README.phpagi-asmanager`, `docs/README.phpagi-fastagi` and `docs/fastagi.xinetd`.
-7. **Docker integration job** against Asterisk 20 and 22.
+7. **Remaining CI:** `integration.yml` (Docker, Asterisk 20 and 22), `mutation.yml` (Infection), the coverage thresholds, and `release.yml`.
 8. **Publish on Packagist,** release `3.0.0-beta.1` and announce it. Validate it in real-world applications (Pegamento's own applications are the first adopters; their migrations are tracked in their own repositories), collect feedback, fix findings, then release `3.0.0`.
 
 ## Migration guide (`docs/UPGRADING-3.0.md`)
