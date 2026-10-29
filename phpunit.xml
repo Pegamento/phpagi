@@ -4,6 +4,10 @@
          bootstrap="tests/bootstrap.php"
          colors="true"
          cacheDirectory=".phpunit.cache"
+         failOnDeprecation="true"
+         failOnNotice="true"
+         failOnWarning="true"
+         failOnPhpunitDeprecation="true"
          displayDetailsOnTestsThatTriggerWarnings="true"
          displayDetailsOnTestsThatTriggerDeprecations="true"
          displayDetailsOnIncompleteTests="true">
@@ -12,12 +16,6 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
-    <groups>
-        <exclude>
-            <!-- Tests describing the intended behaviour of known bugs; run with: composer test:known-bugs -->
-            <group>known-bug</group>
-        </exclude>
-    </groups>
     <source>
         <include>
             <directory>src</directory>
