@@ -13,7 +13,7 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 | WP | Step | Title | Depends on | Branch | Status |
 |---|---|---|---|---|---|
 | WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` (deleted) | accepted |
-| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | in progress |
+| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | in review |
 | WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | | ready |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
 | WP-05 | 2 | `ResponseParser` | WP-03 | | ready |
