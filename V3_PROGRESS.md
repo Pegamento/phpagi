@@ -13,7 +13,7 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 | WP | Step | Title | Depends on | Branch | Status |
 |---|---|---|---|---|---|
 | WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` (deleted) | accepted |
-| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | ready |
+| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | in progress |
 | WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | | ready |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
 | WP-05 | 2 | `ResponseParser` | WP-03 | | ready |
@@ -54,6 +54,12 @@ Later steps stay at this granularity until their step starts. Parallel groups ar
 | D5 | The `config.platform.php` 8.4 pin is removed. No `composer.lock`. | PHP 8.5 compatibility: remove the pin, or keep it only for lock-file generation; the library does not commit a lock file | There is no lock file to generate, so the pin has nothing to pin. |
 | D6 | Work-package branches are `v3-wp-<nn>-<slug>`, not `v3/wp-<nn>-<slug>`. Push only `v3` and `v3-wp-*`. | Director operating model: branch `v3/wp-<nn>-<slug>` | Git stores branch `v3` as `refs/heads/v3`, so it cannot also create `refs/heads/v3/wp-…`. The hyphen keeps the same prefix and the same push limit. |
 | D7 | `.gitattributes` sets `* text=auto eol=lf`. | Code style check must pass where the work is reviewed | This machine has `core.autocrlf=true`. Git stored LF and checked out CRLF, so PHP-CS-Fixer failed on the integrated tree. `eol=lf` checks text out as LF without changing git config. |
+| D8 | The weekly schedule is `0 6 * * 1` (Monday 06:00 UTC). | Continuous integration: "Monday morning" | The plan names the day and not the clock time. |
+| D9 | Only the `tests` job gets `issues: write`, plus `contents: read`. Every other job stays at the workflow default `contents: read`. | Minimal permissions, and the weekly run opens a GitHub issue | Filing an issue cannot be done with `contents: read`. Keeping the extra permission on the one job that files issues leaves the rest of the workflow read-only. |
+| D10 | CI runs the committed PHPStan range `80400`–`80599` on both PHP versions. No per-job config file. | PHPStan `phpVersion` range, and the static-analysis job "with phpVersion matching the job's PHP" | The range is what flags both 8.5-only APIs and deprecations inside 8.4–8.5. Running that config on each job's PHP binary is the match. |
+| D11 | Dependabot's Composer updates are limited to development dependencies. | "Dependabot keeps GitHub Actions versions and Composer dev dependencies up to date" | The plan names dev dependencies. `psr/log` stays a manual bump. |
+| D12 | The coverage job runs PHPUnit with PCOV and uploads the Clover artifact. No threshold and no Codecov. | Coverage thresholds arrive in step 8; Codecov is optional | WP-22 owns the threshold. Codecov would need a secret. |
+| D13 | `next-php` uses setup-php `nightly` and `continue-on-error: true`. | "an allowed-to-fail job on the upcoming PHP version (nightly or RC builds)" | 8.5 is a required version, so the upcoming line is nightly. |
 
 ## Open questions
 
