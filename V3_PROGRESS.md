@@ -12,8 +12,8 @@ Status values: `ready` | `in progress` | `in review` | `accepted` | `blocked`.
 
 | WP | Step | Title | Depends on | Branch | Status |
 |---|---|---|---|---|---|
-| WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3/wp-01-skeleton` | in progress |
-| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3/wp-02-ci` | ready |
+| WP-01 | 1 | Skeleton: Composer, PHPStan, code style, PHPUnit, remove 2.x sources | — | `v3-wp-01-skeleton` | in progress |
+| WP-02 | 1 | `ci.yml`, Dependabot, required-check names | WP-01 | `v3-wp-02-ci` | ready |
 | WP-03 | 2 | Contracts: `Transport`, `AgiThrowable`, exception skeletons, empty namespaces | step 1 | | ready |
 | WP-04 | 2 | `StreamTransport` | WP-03 | | ready |
 | WP-05 | 2 | `ResponseParser` | WP-03 | | ready |
@@ -52,6 +52,7 @@ Later steps stay at this granularity until their step starts. Parallel groups ar
 | D3 | `ergebnis/composer-normalize` is a WP-01 dev dependency. | `ci.yml` job **composer**: `composer normalize --dry-run` | The plan requires that command in CI. `composer.json` belongs to WP-01, so the tool lands there and WP-02 only adds the workflow. |
 | D4 | WP-01 adds `tests/BootstrapTest.php`, asserting the bootstrap left `error_reporting` at `E_ALL`. It is not a port of a 2.x test. | Step 1: remove the 2.x tests and port nothing; tests pass at every commit | PHPUnit 12 fails an empty suite. The assertion locks the required bootstrap behavior. |
 | D5 | The `config.platform.php` 8.4 pin is removed. No `composer.lock`. | PHP 8.5 compatibility: remove the pin, or keep it only for lock-file generation; the library does not commit a lock file | There is no lock file to generate, so the pin has nothing to pin. |
+| D6 | Work-package branches are `v3-wp-<nn>-<slug>`, not `v3/wp-<nn>-<slug>`. Push only `v3` and `v3-wp-*`. | Director operating model: branch `v3/wp-<nn>-<slug>` | Git stores branch `v3` as `refs/heads/v3`, so it cannot also create `refs/heads/v3/wp-…`. The hyphen keeps the same prefix and the same push limit. |
 
 ## Open questions
 
